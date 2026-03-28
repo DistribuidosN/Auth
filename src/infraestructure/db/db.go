@@ -3,33 +3,36 @@ package db
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"Auth/infraestructure/config"
 
-	"github.com/jmoiron/sqlx"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	_ "github.com/go-sql-driver/mysql"
+	"github.com/jmoiron/sqlx"
 )
 
-func ConnectDB(cfg *config.Config) *sqlx.DB {
+// ConnectDB abre la conexión a Postgres y configura el pool.
+// Retorna error en lugar de log.Fatalf para que main.go decida qué hacer.
+func ConnectDB(cfg *config.DBConfig, logger *slog.Logger) (*sqlx.DB, error) {
 	dsn := fmt.Sprintf(
-		"postgres://%s:%s@%s:%s/%s?sslmode=disable",
+		"%s:%s@tcp(%s:%s)/%s?parseTime=true",
 		cfg.DBUser,
 		cfg.DBPassword,
 		cfg.DBHost,
 		cfg.DBPort,
 		cfg.DBName,
 	)
-
-	db, err := sqlx.Open("pgx", dsn)
+ 
+	db, err := sqlx.Open("mysql", dsn)
 	if err != nil {
-		log.Fatalf("Error abriendo conexión: %v", err)
+		return nil, fmt.Errorf("error abriendo conexión: %w", err)
 	}
 
 	//CONFIGURACIÓN DEL POOL
-	db.SetMaxOpenConns(25)              // máximo de conexiones abiertas
-	db.SetMaxIdleConns(10)              // conexiones en espera (reutilizables)
+	db.SetMaxOpenConns(25)                 // máximo de conexiones abiertas
+	db.SetMaxIdleConns(10)                 // conexiones en espera (reutilizables)
 	db.SetConnMaxIdleTime(5 * time.Minute) // tiempo máximo idle
 	db.SetConnMaxLifetime(1 * time.Hour)   // vida máxima de una conexión
 
@@ -38,9 +41,14 @@ func ConnectDB(cfg *config.Config) *sqlx.DB {
 	defer cancel()
 
 	if err := db.PingContext(ctx); err != nil {
-		log.Fatalf("Error conectando a PostgreSQL: %v", err)
+		return nil, fmt.Errorf("no se pudo conectar a mysql en %s:%s: %w",
+			cfg.DBHost, cfg.DBPort, err) // ← retorna, no mata
 	}
 
-	log.Println("✅ Conexión a PostgreSQL con pool exitosa")
-	return db
+	logger.Info("conexión a mysql establecida con pool",
+		"host", cfg.DBHost,
+		"port", cfg.DBPort,
+		"database", cfg.DBName,
+	)
+	return db, nil
 }

@@ -1,4 +1,3 @@
-// main.go
 package main
 
 import (
@@ -11,19 +10,20 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jmoiron/sqlx"
+
 	jwtAdapter "Auth/adapters/auth"
 	httpServer "Auth/adapters/http"
 	"Auth/adapters/http/handlers"
 	"Auth/adapters/repository"
 	"Auth/core/services"
-	"Auth/infrastructure/config"
-	"Auth/infrastructure/db"
+	"Auth/infraestructure/config"
+	infraDB "Auth/infraestructure/db"
 )
 
 func main() {
-	// 1. Inicializar dependencias base
 	logger := setupLogger()
-	cfg := config.Load()
+	cfg := config.LoadConfig()
 
 	// 2. Conectar a la base de datos
 	db := setupDatabase(cfg, logger)
@@ -39,15 +39,15 @@ func main() {
 }
 
 // setupDatabase intenta conectar a la BD y detiene el programa si falla.
-func setupDatabase(cfg *config.Config, logger *slog.Logger) *database.DB {
-	db, err := database.Connect(cfg.Database, logger)
+func setupDatabase(cfg *config.Config, logger *slog.Logger) *sqlx.DB {
+	sqlxDB, err := infraDB.ConnectDB(&cfg.Database, logger)
 	if err != nil {
 		logger.Error("no se pudo conectar a la base de datos", "error", err)
 		os.Exit(1) // Si no hay BD, no tiene sentido arrancar el servidor
 	}
 
 	logger.Info("conexión a la base de datos establecida exitosamente")
-	return db
+	return sqlxDB
 }
 
 // setupLogger configura y retorna el logger principal de la aplicación.
@@ -62,35 +62,33 @@ func setupLogger() *slog.Logger {
 // buildServer se encarga de toda la Inyección de Dependencias.
 // Recibe la configuración, la BD y el logger, y devuelve un servidor HTTP listo.
 // Nota: Ajusta los tipos `*config.Config` y `*database.DB` según como los tengas definidos en tu código.
-func buildServer(cfg *config.Config, db *database.DB, logger *slog.Logger) *http.Server {
-	// -- Capa de Persistencia (Repositorios) --
-	batchRepo := repository.NewBatchRepository(db)
-	imageRepo := repository.NewImageRepository(db)
-	nodeRepo := repository.NewNodeRepository(db)
-	logRepo := repository.NewLogRepository(db)
+func buildServer(cfg *config.Config, sqlxDB *sqlx.DB, logger *slog.Logger) *http.Server {
+	// Adaptador JWT (único objeto, implementa dos puertos)
+	// driven.TokenGeneratorPort → lo usa el servicio para GENERAR tokens
+	// driving.TokenServicePort  → lo usa el middleware para VALIDAR tokens
+	jwtSvc := jwtAdapter.NewJWTService(cfg.JWT.SecretKey, cfg.JWT.ServiceSecret)
 
-	// -- Capa de Dominio (Servicios) --
-	batchSvc := services.NewBatchService(batchRepo, imageRepo)
-	imageSvc := services.NewImageService(imageRepo)
-	nodeSvc := services.NewNodeService(nodeRepo)
-	logSvc := services.NewLogService(logRepo)
+	// Adaptador secundario: repositorio Postgres 
+	// Recibe *sqlx.DB — no sabe cómo se abrió la conexión
+	authRepo := repository.NewAuthRepository(sqlxDB)
 
-	// -- Adaptadores de Autenticación --
-	tokenSvc := jwtAdapter.NewJWTTokenService(cfg.JWT.SecretKey, cfg.JWT.ServiceSecret)
+	// Núcleo: servicio de dominio
+	// Solo conoce interfaces driven (repo + generador JWT), nunca concreciones.
+	// jwtSvc satisface driven.TokenGeneratorPort automáticamente.
+	authSvc := services.NewAuthService(authRepo, jwtSvc)
 
-	// -- Capa de Presentación (Handlers) --
-	batchHandler := handlers.NewBatchHandler(batchSvc, imageSvc)
-	imageHandler := handlers.NewImageHandler(imageSvc)
-	nodeHandler := handlers.NewNodeHandler(nodeSvc, logSvc)
-	logHandler := handlers.NewLogHandler(logSvc)
 
-	// -- Enrutador --
-	router := httpServer.NewRouter(
-		batchHandler, imageHandler, nodeHandler, logHandler,
-		tokenSvc, logger,
-	)
+	// Adaptadores primarios: handlers HTTP 
+	// Solo conocen la interfaz driving.AuthServicePort
+	authHandler := handlers.NewAuthHandler(authSvc)
+ 
 
-	// -- Configuración del Servidor HTTP --
+	// Router con middlewares
+	// jwtSvc satisface driving.TokenServicePort → el middleware lo usa para validar
+	router := httpServer.NewRouter(authHandler, jwtSvc, logger)
+ 
+
+	// Configuración del Servidor HTTP
 	addr := fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port)
 	return &http.Server{
 		Addr:         addr,

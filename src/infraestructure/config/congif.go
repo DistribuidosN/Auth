@@ -1,36 +1,62 @@
 package config
 
 import (
-	"log"
+	"fmt"
 	"os"
 
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
+	Server   ServerConfig
+	Database DBConfig
+	JWT      JWTConfig
+}
+type ServerConfig struct {
+	Host string
+	Port string
+}
+type DBConfig struct {
 	DBUser     string
 	DBPassword string
 	DBHost     string
 	DBPort     string
 	DBName     string
-	JWTSecret  string
-	ServerPort string
 }
 
-// LoadConfig lee el archivo .env y carga las variables en la estructura
+type JWTConfig struct {
+	SecretKey     string // clave compartida con todos los servicios que validen tokens
+	ServiceSecret string // clave para tokens inter-servicios
+}
+
+// Load carga configuración desde .env o variables del sistema.
+// Hace panic si faltan variables críticas — mejor fallar al inicio.
 func LoadConfig() *Config {
-	err := godotenv.Load()
-	if err != nil {
-		log.Println("Advertencia: No se encontró archivo .env, usando variables del sistema")
-	}
+	_ = godotenv.Load("../.env")
 
 	return &Config{
-		DBUser:     os.Getenv("DB_USER"),
-		DBPassword: os.Getenv("DB_PASSWORD"),
-		DBHost:     os.Getenv("DB_HOST"),
-		DBPort:     os.Getenv("DB_PORT"),
-		DBName:     os.Getenv("DB_NAME"),
-		JWTSecret:  os.Getenv("JWT_SECRET"),
-		ServerPort: os.Getenv("SERVER_PORT"),
+		Server: ServerConfig{
+			Host: mustEnv("SERVER_HOST"),
+			Port: mustEnv("SERVER_PORT"),
+		},
+		Database: DBConfig{
+			DBUser:     mustEnv("DB_USER"),
+			DBPassword: mustEnv("DB_PASSWORD"),
+			DBHost:     mustEnv("DB_HOST"),
+			DBPort:     mustEnv("DB_PORT"),
+			DBName:     mustEnv("DB_NAME"),
+		},
+		JWT: JWTConfig{
+			SecretKey:     mustEnv("JWT_SECRET"),
+			ServiceSecret: mustEnv("JWT_SERVICE_SECRET"),
+		},
 	}
+}
+
+func mustEnv(key string) string {
+	v := os.Getenv(key)
+	if v == "" {
+		panic(fmt.Sprintf("variable de entorno requerida no definida: %s", key))
+	}
+	return v
 }
