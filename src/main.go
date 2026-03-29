@@ -25,16 +25,16 @@ func main() {
 	logger := setupLogger()
 	cfg := config.LoadConfig()
 
-	// 2. Conectar a la base de datos
+	// Conectar a la base de datos
 	db := setupDatabase(cfg, logger)
-	// ¡Ojo aquí! El defer se queda en el main para que la conexión
+	//El defer se queda en el main para que la conexión
 	// viva mientras el servidor esté encendido.
 	defer db.Close()
 
-	// 3. Ensamblar la aplicación y obtener el servidor HTTP
+	// Ensamblar la aplicación y obtener el servidor HTTP
 	srv := buildServer(cfg, db, logger)
 
-	// 4. Arrancar el servidor y manejar el apagado seguro (Graceful Shutdown)
+	// Arrancar el servidor y manejar el apagado seguro (Graceful Shutdown)
 	runServer(srv, logger)
 }
 
