@@ -83,14 +83,14 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 // loginRequest es el body para autenticarse.
 type loginRequest struct {
-	Username string `json:"username"`
+	Identity string `json:"identity"` // Acepta username o email
 	Password string `json:"password"`
 }
 
 // Login valida credenciales y devuelve un JWT.
 //
 //	POST /auth/login
-//	Body: { "username": "christian", "password": "segura1234" }
+//	Body: { "identity": "christian@mail.com", "password": "..." }
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -98,7 +98,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, user, err := h.authSvc.Login(req.Username, req.Password)
+	token, user, err := h.authSvc.Login(req.Identity, req.Password)
 	if err != nil {
 		// 401 para credenciales inválidas — no revelar si el usuario existe
 		middleware.WriteError(w, http.StatusUnauthorized, err.Error())

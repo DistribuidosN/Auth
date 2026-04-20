@@ -61,13 +61,13 @@ func (s *authService) Register(username, password string, email string, roleID i
 	return s.authRepo.CreateUser(user)
 }
 
-// Login valida credenciales y retorna un JWT + el usuario.
-func (s *authService) Login(username, password string) (string, *entities.User, error) {
-	if username == "" || password == "" {
-		return "", nil, fmt.Errorf("username y password son requeridos")
+// Login valida credenciales (username o email) y retorna un JWT + el usuario.
+func (s *authService) Login(identifier, password string) (string, *entities.User, error) {
+	if identifier == "" || password == "" {
+		return "", nil, fmt.Errorf("identificador y contraseña son requeridos")
 	}
 
-	user, err := s.authRepo.GetUserByUsername(username)
+	user, err := s.authRepo.GetUserByIdentifier(identifier)
 	if err != nil {
 		return "", nil, fmt.Errorf("credenciales inválidas") // no revelar si existe
 	}

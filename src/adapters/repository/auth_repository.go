@@ -70,6 +70,20 @@ func (r *postgresAuthRepo) GetUserByEmail(email string) (*entities.User, error) 
 	return user, nil
 }
 
+// GetUserByIdentifier busca un usuario por username O email.
+func (r *postgresAuthRepo) GetUserByIdentifier(identifier string) (*entities.User, error) {
+	query := `
+		SELECT id, user_uuid, username, email, password_hash, role_id, status, created_at
+		FROM users
+		WHERE (username = $1 OR email = $1) AND status = 1`
+
+	user := &entities.User{}
+	if err := r.db.Get(user, query, identifier); err != nil {
+		return nil, fmt.Errorf("GetUserByIdentifier(%s): %w", identifier, err)
+	}
+	return user, nil
+}
+
 // UpdatePassword updates the user's password hash.
 func (r *postgresAuthRepo) UpdatePassword(userUUID string, newPasswordHash string) error {
 	query := `UPDATE users SET password_hash = $1 WHERE user_uuid = $2`

@@ -21,6 +21,9 @@ type AuthRepositoryPort interface {
 	// GetUserByEmail busca un usuario por su correo electrónico.
 	GetUserByEmail(email string) (*entities.User, error)
 
+	// GetUserByIdentifier busca un usuario por username O email.
+	GetUserByIdentifier(identifier string) (*entities.User, error)
+
 	// UpdatePassword updates the user's password.
 	UpdatePassword(userUUID string, newPasswordHash string) error
 }
