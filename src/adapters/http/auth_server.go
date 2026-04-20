@@ -12,21 +12,19 @@ import (
 
 // NewRouter construye el ServeMux de Go 1.22 con todas las rutas.
 //
-// Rutas públicas  (sin auth): /auth/register, /auth/login, /health
-// Rutas protegidas (con auth): /auth/profile, /auth/validate, /auth/account
+// Rutas (sin middleware de auth, gestionado por Java):
+// /auth/register, /auth/login, /auth/validate, /auth/logout, /auth/forget-password, /auth/reset-password
+// /user/profile, /user/account, /user/search, /roles, /permissions
 func NewRouter(
 	authHandler *handlers.AuthHandler,
+	userHandler *handlers.UserHandler,
 	tokenSvc    driving.TokenServicePort,
 	logger      *slog.Logger,
 ) http.Handler {
 
 	mux := http.NewServeMux()
 
-	// Middleware de autenticación listo para aplicar a rutas protegidas
-	authMw := middleware.Auth(tokenSvc)
-
 	// ── Health check ─────────────────────────────────────────────────────────
-	// Sin auth — usado por el orquestador para verificar que el servicio vive
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		middleware.WriteJSON(w, http.StatusOK, map[string]string{
 			"status":  "ok",
@@ -34,98 +32,53 @@ func NewRouter(
 		})
 	})
 
-	mux.HandleFunc("GET  /api", func (w http.ResponseWriter, r *http.Request)  {
-		endpoints :=  []map[string]any{
-			{
-                "path":        "/health",
-                "method":      "GET",
-                "auth":        false,
-                "description": "Verifica que el servicio esté vivo",
-            },
-            {
-                "path":        "/api",
-                "method":      "GET",
-                "auth":        false,
-                "description": "Lista y documenta todos los endpoints disponibles",
-            },
-            {
-                "path":        "/auth/register",
-                "method":      "POST",
-                "auth":        false,
-                "description": "Crea una cuenta nueva. Requiere username, password y role_id.",
-            },
-            {
-                "path":        "/auth/login",
-                "method":      "POST",
-                "auth":        false,
-                "description": "Autentica al usuario y devuelve un token JWT.",
-            },
-            {
-                "path":        "/auth/profile",
-                "method":      "GET",
-                "auth":        true,
-                "description": "Retorna el perfil del usuario autenticado.",
-            },
-            {
-                "path":        "/auth/profile",
-                "method":      "PUT",
-                "auth":        true,
-                "description": "Actualiza el username del usuario autenticado.",
-            },
-            {
-                "path":        "/auth/account",
-                "method":      "DELETE",
-                "auth":        true,
-                "description": "Desactiva la cuenta del usuario autenticado (soft delete).",
-            },
-            {
-                "path":        "/auth/validate",
-                "method":      "POST",
-                "auth":        true,
-                "description": "Valida un token proporcionado. Útil para comunicación inter-servicios.",
-            },
+	mux.HandleFunc("GET /api", func(w http.ResponseWriter, r *http.Request) {
+		endpoints := []map[string]any{
+			{"path": "/health", "method": "GET", "auth": false, "description": "Verifica que el servicio esté vivo"},
+			{"path": "/api", "method": "GET", "auth": false, "description": "Lista de endpoints"},
+			{"path": "/auth/register", "method": "POST", "auth": false, "description": "Crear cuenta"},
+			{"path": "/auth/login", "method": "POST", "auth": false, "description": "Iniciar sesión"},
+			{"path": "/auth/validate", "method": "POST", "auth": false, "description": "Valida un token JWT"},
+			{"path": "/auth/logout", "method": "POST", "auth": false, "description": "Cerrar sesión"},
+			{"path": "/auth/forget-password", "method": "POST", "auth": false, "description": "Reseteo directo de clave vía email"},
+			{"path": "/auth/reset-password", "method": "POST", "auth": false, "description": "Resetear clave (requiere token en header)"},
+
+			{"path": "/user/profile", "method": "GET", "auth": false, "description": "Ver perfil (requiere token en header)"},
+			{"path": "/user/profile", "method": "PUT", "auth": false, "description": "Actualizar perfil (requiere token en header)"},
+			{"path": "/user/account", "method": "DELETE", "auth": false, "description": "Desactivar perfil (requiere token en header)"},
+			{"path": "/user/search", "method": "GET", "auth": false, "description": "Buscar usuario"},
+			{"path": "/roles", "method": "GET", "auth": false, "description": "Obtener rol por ID"},
+			{"path": "/permissions", "method": "GET", "auth": false, "description": "Obtener permisos por rol ID"},
 		}
 
-		middleware.WriteJSON(w,   http.StatusOK, map[string]any{
+		middleware.WriteJSON(w, http.StatusOK, map[string]any{
 			"api_version": "v1",
-			"service":  "Auth Server",
-			"endpoints": endpoints,
+			"service":     "Auth Server",
+			"endpoints":   endpoints,
 		})
 	})
 
-	// ── Rutas públicas ────────────────────────────────────────────────────────
-	// No requieren token — son el punto de entrada al sistema
-
-	// POST /auth/register → crear cuenta nueva
+	// ── Rutas de Autenticación ──────────────────────────────────────────────────
 	mux.HandleFunc("POST /auth/register", authHandler.Register)
-
-	// POST /auth/login → autenticarse y recibir JWT
 	mux.HandleFunc("POST /auth/login", authHandler.Login)
+	mux.HandleFunc("POST /auth/validate", authHandler.ValidateToken) // Expuesto din middleware para auth inter-servicio
+	mux.HandleFunc("POST /auth/logout", authHandler.Logout)
+	mux.HandleFunc("POST /auth/forget-password", authHandler.ForgetPassword)
+	mux.HandleFunc("POST /auth/reset-password", authHandler.ResetPassword)
 
-	// ── Rutas protegidas ──────────────────────────────────────────────────────
-	// El middleware.Auth valida el Bearer token antes de llegar al handler.
-	// Si el token es inválido → 401 automático, el handler nunca se ejecuta.
+	// ── Rutas de Usuario ────────────────────────────────────────────────────────
+	// El middleware ya no protege estas rutas en el enrutamiento.
+	// La comprobación del token la hace el Handler manualmente invocando `extractClaims`
+	mux.HandleFunc("GET /user/profile", userHandler.Profile)
+	mux.HandleFunc("PUT /user/profile", userHandler.UpdateProfile)
+	mux.HandleFunc("DELETE /user/account", userHandler.DeleteAccount)
+	mux.HandleFunc("GET /user/search", userHandler.SearchUser)
+	mux.HandleFunc("GET /roles", userHandler.GetRoleByID)
+	mux.HandleFunc("GET /permissions", userHandler.GetPermissionsByRoleID)
 
-	// GET /auth/profile → ver perfil del usuario autenticado
-	mux.Handle("GET /auth/profile",
-		authMw(http.HandlerFunc(authHandler.Profile)))
-
-	// PUT /auth/profile → actualizar username
-	mux.Handle("PUT /auth/profile",
-		authMw(http.HandlerFunc(authHandler.UpdateProfile)))
-
-	// DELETE /auth/account → desactivar cuenta (soft delete)
-	mux.Handle("DELETE /auth/account",
-		authMw(http.HandlerFunc(authHandler.DeleteAccount)))
-
-	// POST /auth/validate → verificar un token (para uso de otros servicios)
-	// El token a validar viene en el body, pero también se valida el Bearer del caller
-	mux.Handle("POST /auth/validate",
-		authMw(http.HandlerFunc(authHandler.ValidateToken)))
 
 	// ── Middlewares globales (se aplican a TODAS las rutas) ───────────────────
 	// Orden de ejecución: CORS → Logger → mux
-	// CORS va primero para responder OPTIONS sin llegar al logger
 	return middleware.CORS(
 		middleware.Logger(logger)(
 			middleware.JSONContentType(mux),

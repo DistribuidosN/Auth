@@ -312,39 +312,34 @@ Respuesta HTTP 200
 }
 ```
 
-### GET /auth/profile (ruta protegida)
+### GET /user/profile (identidad local, validación perimetral por Java)
 
-```
-Cliente
+```text
+Cliente → Orquestador Java (Valida perimetralmente)
   │
-  │  GET /auth/profile
+  ├─ Java reenvía a Go: GET /user/profile
   │  Authorization: Bearer eyJhbGci...
-  │
   ▼
 middleware.CORS → Logger → JSONContentType
   ▼
-mux → encuentra "GET /auth/profile" → está envuelta en authMw(...)
+mux → encuentra "GET /user/profile"
   ▼
-middleware.Auth()                           [ADAPTADOR PRIMARIO]
-  │  Extrae "Bearer eyJhbGci..." del header
-  │  Llama tokenSvc.ValidateToken("eyJhbGci...")
+UserHandler.Profile()                       [ADAPTADOR PRIMARIO]
+  │  Llama a extractClaims() leyendo el Header directamente sin middleware bloqueante
+  │  Detokeniza a través del adapter JWT
   ▼
-jwtTokenService.ValidateToken()            [ADAPTADOR DRIVEN]
+jwtTokenService.ValidateToken()             [ADAPTADOR DRIVEN]
   │  jwt.ParseWithClaims(...)
-  │  Verifica firma HMAC-SHA256
-  │  Verifica que no esté expirado
+  │  Verifica firma y expiración
   │  Retorna &TokenClaims{UserUUID: "a1b2-...", ...}
   ▼
-middleware.Auth() inyecta claims en context.WithValue(...)
+UserHandler.Profile()
+  │  Llama userSvc.GetProfile(claims)        (nunca expone raw User ID a la web)
   ▼
-AuthHandler.Profile()
-  │  claims := middleware.GetClaims(r)  ← extrae del contexto
-  │  Llama authSvc.GetProfile(claims.UserUUID)
+userService.GetProfile()                    [NÚCLEO USER]
+  │  Llama userRepo.GetUserByUUID(claims.UserUUID)
   ▼
-authService.GetProfile()                   [NÚCLEO]
-  │  Llama authRepo.GetUserByUUID(userUUID)
-  ▼
-postgresAuthRepo.GetUserByUUID()           [ADAPTADOR DRIVEN]
+postgresUserRepo.GetUserByUUID()            [ADAPTADOR DRIVEN]
   │  SELECT ... FROM users WHERE user_uuid = $1
   ▼
 Respuesta HTTP 200 — User struct (sin password_hash por json:"-")
@@ -354,38 +349,37 @@ Respuesta HTTP 200 — User struct (sin password_hash por json:"-")
 
 ## Endpoints
 
-| Método   | Ruta               | Auth  | Descripción                              |
-|----------|--------------------|-------|------------------------------------------|
-| `GET`    | `/health`          | No    | Estado del servidor                      |
-| `POST`   | `/auth/register`   | No    | Crear cuenta nueva                       |
-| `POST`   | `/auth/login`      | No    | Autenticarse y recibir JWT               |
-| `GET`    | `/auth/profile`    | Sí    | Ver perfil del usuario logueado          |
-| `PUT`    | `/auth/profile`    | Sí    | Actualizar username                      |
-| `DELETE` | `/auth/account`    | Sí    | Desactivar cuenta (soft delete)          |
-| `POST`   | `/auth/validate`   | Sí    | Verificar token (para otros servicios)   |
+| Método   | Ruta               | Auth    | Descripción                              |
+|----------|--------------------|---------|------------------------------------------|
+| `GET`    | `/health`          | No      | Estado del servidor                      |
+| `POST`   | `/auth/register`   | No      | Crear cuenta nueva                       |
+| `POST`   | `/auth/login`      | No      | Autenticarse y recibir JWT               |
+| `POST`   | `/auth/logout`     | No      | Cerrar sesión (Frontend drops token)     |
+| `POST`   | `/auth/forget-password`| No  | Generar enlace virtual mágico            |
+| `POST`   | `/auth/reset-password` | Token | Cambiar clave usando token dinámico    |
+| `POST`   | `/auth/validate`   | Local   | Verificar JWT (para orquestador Java)    |
+| `GET`    | `/user/profile`    | Passthru| Ver perfil (Java envía Token en Header)  |
+| `PUT`    | `/user/profile`    | Passthru| Actualizar username                      |
+| `DELETE` | `/user/account`    | Passthru| Desactivar cuenta (soft delete)          |
+| `GET`    | `/user/search`     | Passthru| Buscar usuario por similitud de nombre   |
+| `GET`    | `/roles`           | Passthru| Obtener rol por ID (`?role_id=X`)        |
+| `GET`    | `/permissions`     | Passthru| Obtener permisos del rol (`?role_id=X`)  |
+
+> **Sobre la Autorización (Auth):** La protección estricta 401 (Middleware Auth global) fue removida de este componente porque el API Gateway de Java asume la responsabilidad perimetral. Los endpoints de usuario (`/user/*`) reciben el token originario transparente (`Passthru`) desde Java y extraen la identidad para aplicar la acción localmente destokenizando.
 
 ### Ejemplos de request
 
 ```bash
-# Registrar usuario
-curl -X POST http://localhost:8080/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"username": "christian", "password": "segura1234", "role_id": 1}'
-
-# Login → recibe JWT
-curl -X POST http://localhost:8080/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username": "christian", "password": "segura1234"}'
-
-# Ver perfil (con token)
-curl http://localhost:8080/auth/profile \
-  -H "Authorization: Bearer eyJhbGci..."
-
-# Validar token (usado por otros microservicios)
+# Validar token a voluntad (Java Orchestrator -> Go)
 curl -X POST http://localhost:8080/auth/validate \
-  -H "Authorization: Bearer eyJhbGci..." \
   -H "Content-Type: application/json" \
   -d '{"token": "eyJhbGci..."}'
+
+# User profile update
+curl -X PUT http://localhost:8080/user/profile \
+  -H "Authorization: Bearer eyJhbGci..." \
+  -H "Content-Type: application/json" \
+  -d '{"username": "christian_new"}'
 ```
 
 ---
@@ -455,35 +449,40 @@ make build       # genera bin/auth-server
 ```sql
 -- Roles del sistema
 CREATE TABLE roles (
-    id     SERIAL PRIMARY KEY,
-    name   VARCHAR(50) UNIQUE NOT NULL,  -- 'admin', 'user', 'node'
-    status SMALLINT NOT NULL DEFAULT 1
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(50) NOT NULL UNIQUE,
+    status SMALLINT NOT NULL DEFAULT 1 
 );
+COMMENT ON TABLE roles IS 'Almacena los perfiles(roles) de acceso disponibles';
 
 -- Permisos por ruta
 CREATE TABLE permissions (
-    id          SERIAL PRIMARY KEY,
-    description VARCHAR(100) NOT NULL,
-    route       VARCHAR(100) NOT NULL
+    id SERIAL PRIMARY KEY,
+    description VARCHAR(100) NOT NULL UNIQUE,
+    route VARCHAR(100) NOT NULL
 );
+COMMENT ON TABLE permissions IS 'Catálogo de rutas y acciones protegidas por el sistema';
 
 -- Relación rol ↔ permiso (RBAC)
 CREATE TABLE role_permissions (
-    role_id       INT NOT NULL REFERENCES roles(id),
-    permission_id INT NOT NULL REFERENCES permissions(id),
+    role_id INT REFERENCES roles(id),
+    permission_id INT REFERENCES permissions(id),
     PRIMARY KEY (role_id, permission_id)
 );
+COMMENT ON TABLE role_permissions IS 'Asociación de muchos a muchos para definir permisos por perfil';
 
 -- Usuarios
 CREATE TABLE users (
-    id            SERIAL PRIMARY KEY,
-    user_uuid     CHAR(36)     NOT NULL UNIQUE,   -- UUID público seguro
-    username      VARCHAR(50)  NOT NULL UNIQUE,
-    password_hash VARCHAR(255) NOT NULL,           -- bcrypt costo 12
-    role_id       INT          NOT NULL REFERENCES roles(id),
-    status        SMALLINT     NOT NULL DEFAULT 1, -- 0 = desactivado
-    created_at    TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    id SERIAL PRIMARY KEY,
+    user_uuid UUID NOT NULL UNIQUE,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    email VARCHAR(100) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    role_id INT NOT NULL REFERENCES roles(id),
+    status SMALLINT NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+COMMENT ON TABLE users IS 'Entidad principal asignando perfiles 1:N';
 ```
 
 ### Relaciones
