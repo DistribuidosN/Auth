@@ -5,6 +5,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"Auth/adapters/http/middleware"
 	"Auth/core/ports/driving"
@@ -12,12 +13,32 @@ import (
 
 // AuthHandler maneja todos los endpoints de autenticación.
 type AuthHandler struct {
-	authSvc driving.AuthServicePort
+	authSvc  driving.AuthServicePort
+	tokenSvc driving.TokenServicePort
 }
 
-// NewAuthHandler crea el handler inyectando la interfaz del servicio.
-func NewAuthHandler(authSvc driving.AuthServicePort) *AuthHandler {
-	return &AuthHandler{authSvc: authSvc}
+// NewAuthHandler crea el handler inyectando la interfaz del servicio y el validador de tokens.
+func NewAuthHandler(authSvc driving.AuthServicePort, tokenSvc driving.TokenServicePort) *AuthHandler {
+	return &AuthHandler{authSvc: authSvc, tokenSvc: tokenSvc}
+}
+
+func (h *AuthHandler) extractClaims(w http.ResponseWriter, r *http.Request) *driving.TokenClaims {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		middleware.WriteError(w, http.StatusUnauthorized, "header Authorization requerido")
+		return nil
+	}
+	parts := strings.SplitN(authHeader, " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
+		middleware.WriteError(w, http.StatusUnauthorized, "formato inválido — use: Bearer <token>")
+		return nil
+	}
+	claims, err := h.tokenSvc.ValidateToken(parts[1])
+	if err != nil {
+		middleware.WriteError(w, http.StatusUnauthorized, "token inválido o expirado")
+		return nil
+	}
+	return claims
 }
 
 // POST /auth/register
@@ -42,10 +63,10 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.RoleID == 0 {
-		req.RoleID = 1 // rol por defecto: usuario normal
+		req.RoleID = 2 // rol por defecto: usuario normal
 	}
 
-	user, err := h.authSvc.Register(req.Username, req.Password, req.Email , req.RoleID)
+	user, err := h.authSvc.Register(req.Username, req.Password, req.Email, req.RoleID)
 	if err != nil {
 		middleware.WriteError(w, http.StatusBadRequest, err.Error())
 		return
@@ -92,110 +113,48 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GET /auth/profile 
+// DELETE /auth/logout
 
-// Profile retorna el perfil del usuario autenticado.
-// Requiere middleware.Auth aplicado — extrae el UUID del token.
-//
-//	GET /auth/profile
-//	Header: Authorization: Bearer <token>
-func (h *AuthHandler) Profile(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetClaims(r)
-	if claims == nil {
-		middleware.WriteError(w, http.StatusUnauthorized, "no autenticado")
-		return
-	}
-
-	user, err := h.authSvc.GetProfile(claims.UserUUID)
-	if err != nil {
-		middleware.WriteError(w, http.StatusNotFound, "usuario no encontrado")
-		return
-	}
-
-	middleware.WriteJSON(w, http.StatusOK, user)
+// Logout maneja el cierre de sesión simulado.
+func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	// Solo devolvemos ok, el frontend debe borrar su token
+	middleware.WriteJSON(w, http.StatusOK, map[string]string{
+		"message": "sesión cerrada exitosamente",
+	})
 }
 
-// PUT /auth/profile
+// POST /auth/forget-password
 
-// updateRequest es el body para actualizar el perfil.
-type updateRequest struct {
-	Username string `json:"username"`
+type forgetRequest struct {
+	Email       string `json:"email"`
+	NewPassword string `json:"new_password"`
 }
 
-// UpdateProfile actualiza el username del usuario autenticado.
-//
-//	PUT /auth/profile
-//	Header: Authorization: Bearer <token>
-//	Body: { "username": "nuevo_nombre" }
-func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetClaims(r)
-	if claims == nil {
-		middleware.WriteError(w, http.StatusUnauthorized, "no autenticado")
-		return
-	}
-
-	var req updateRequest
+// ForgetPassword cambia la contraseña usando el email brindado
+// POST /auth/forget-password
+// Body: { "email": "test@test.com", "new_password": "..." }
+func (h *AuthHandler) ForgetPassword(w http.ResponseWriter, r *http.Request) {
+	var req forgetRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		middleware.WriteError(w, http.StatusBadRequest, "body JSON inválido")
 		return
 	}
-
-	user, err := h.authSvc.UpdateProfile(claims.UserUUID, req.Username)
+	
+	err := h.authSvc.ForgetPassword(req.Email, req.NewPassword)
 	if err != nil {
-		middleware.WriteError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	middleware.WriteJSON(w, http.StatusOK, map[string]any{
-		"message":  "perfil actualizado",
-		"username": user.Username,
-	})
-}
-
-// DELETE /auth/account
-
-// DeleteAccount desactiva la cuenta del usuario autenticado (soft delete).
-//
-//	DELETE /auth/account
-//	Header: Authorization: Bearer <token>
-func (h *AuthHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetClaims(r)
-	if claims == nil {
-		middleware.WriteError(w, http.StatusUnauthorized, "no autenticado")
-		return
-	}
-
-	if err := h.authSvc.DeleteAccount(claims.UserUUID); err != nil {
 		middleware.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	middleware.WriteJSON(w, http.StatusOK, map[string]string{
-		"message": "cuenta desactivada correctamente",
+		"message": "contraseña actualizada exitosamente",
 	})
 }
 
-// POST /auth/validate
-
-// ValidateToken permite a otros servicios verificar un token sin llamar al Auth Server.
-// Útil para el orquestador Java o el DB Server.
-//
-//	POST /auth/validate
-//	Body: { "token": "eyJhbGci..." }
+// ValidateToken permite a otros servicios verificar un token. El token DEBE viajar en el header Authorization.
 func (h *AuthHandler) ValidateToken(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Token string `json:"token"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Token == "" {
-		middleware.WriteError(w, http.StatusBadRequest, "campo 'token' requerido")
-		return
-	}
-
-	// Reutiliza los claims que ya inyectó el middleware si la ruta está protegida,
-	// o valida manualmente si esta ruta es pública.
-	claims := middleware.GetClaims(r)
+	claims := h.extractClaims(w, r)
 	if claims == nil {
-		middleware.WriteError(w, http.StatusUnauthorized, "token inválido")
 		return
 	}
 
@@ -204,5 +163,40 @@ func (h *AuthHandler) ValidateToken(w http.ResponseWriter, r *http.Request) {
 		"user_uuid": claims.UserUUID,
 		"username":  claims.Username,
 		"role":      claims.Role,
+	})
+}
+
+// POST /auth/reset-password
+
+type resetRequest struct {
+	NewPassword string `json:"new_password"`
+}
+
+// ResetPassword cambia la contraseña. El token de autorización DEBE viajar en el header.
+func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	claims := h.extractClaims(w, r)
+	if claims == nil {
+		return
+	}
+
+	var req resetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		middleware.WriteError(w, http.StatusBadRequest, "body JSON inválido")
+		return
+	}
+
+	if req.NewPassword == "" {
+		middleware.WriteError(w, http.StatusBadRequest, "new_password es requerido")
+		return
+	}
+
+	err := h.authSvc.ResetPassword(claims, req.NewPassword)
+	if err != nil {
+		middleware.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	middleware.WriteJSON(w, http.StatusOK, map[string]string{
+		"message": "contraseña actualizada exitosamente",
 	})
 }

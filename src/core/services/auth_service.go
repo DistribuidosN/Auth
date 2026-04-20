@@ -85,39 +85,60 @@ func (s *authService) Login(username, password string) (string, *entities.User, 
 	return token, user, nil
 }
 
-// GetProfile retorna el perfil del usuario por UUID.
-func (s *authService) GetProfile(userUUID string) (*entities.User, error) {
-	if userUUID == "" {
-		return nil, fmt.Errorf("userUUID requerido")
-	}
-	return s.authRepo.GetUserByUUID(userUUID)
-}
-
-// UpdateProfile actualiza el username. Solo cambia en memoria aquí — el repo
-// debería tener un UpdateUser; por ahora retorna el usuario modificado.
-func (s *authService) UpdateProfile(userUUID, newUsername string) (*entities.User, error) {
-	if newUsername == "" {
-		return nil, fmt.Errorf("el nuevo username no puede estar vacío")
-	}
-	existing, _ := s.authRepo.GetUserByUsername(newUsername)
-	if existing != nil && existing.UserUUID != userUUID {
-		return nil, fmt.Errorf("el username '%s' ya está en uso", newUsername)
-	}
-	user, err := s.authRepo.GetUserByUUID(userUUID)
-	if err != nil {
-		return nil, fmt.Errorf("usuario no encontrado")
-	}
-	user.Username = newUsername
-	return user, nil
-}
-
-// DeleteAccount desactiva la cuenta (soft delete).
-func (s *authService) DeleteAccount(userUUID string) error {
-	_, err := s.authRepo.GetUserByUUID(userUUID)
-	if err != nil {
-		return fmt.Errorf("usuario no encontrado")
-	}
-	// Aquí iría un repo.UpdateUserStatus(userUUID, 0)
-	// Por ahora el puerto driven necesita ese método — se añade después.
+// Logout no tiene efecto real con JWT sin estado, pero se incluye por completitud.
+func (s *authService) Logout(tokenStr string) error {
+	// Aquí se podría implementar una lista negra (Redis)
 	return nil
+}
+
+// ForgetPassword permite restablecer directamente la contraseña proporcionando el email.
+func (s *authService) ForgetPassword(email string, newPassword string) error {
+	if email == "" {
+		return fmt.Errorf("el email es requerido")
+	}
+	if len(newPassword) < 8 {
+		return fmt.Errorf("la nueva contraseña debe tener al menos 8 caracteres")
+	}
+
+	user, err := s.authRepo.GetUserByEmail(email)
+	if err != nil {
+		return fmt.Errorf("no se encontró una cuenta activa con ese correo")
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), 12)
+	if err != nil {
+		return fmt.Errorf("error hasheando contraseña: %w", err)
+	}
+
+	return s.authRepo.UpdatePassword(user.UserUUID, string(hash))
+}
+
+// ResetPassword cambia la contraseña del usuario identificado en los claims.
+func (s *authService) ResetPassword(claims *driving.TokenClaims, newPassword string) error {
+	if claims == nil || claims.UserUUID == "" {
+		return fmt.Errorf("identidad de usuario no válida")
+	}
+	if len(newPassword) < 8 {
+		return fmt.Errorf("la nueva contraseña debe tener al menos 8 caracteres")
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), 12)
+	if err != nil {
+		return fmt.Errorf("error hasheando contraseña: %w", err)
+	}
+
+	return s.authRepo.UpdatePassword(claims.UserUUID, string(hash))
+}
+
+// Detokenize decodifica y valida un tokenJWT 
+func (s *authService) Detokenize(tokenStr string) (*driving.TokenClaims, error) {
+	// Idealmente, el generador también podría tener la firma de ValidateToken, o podemos castear
+	// Como tokenSvc actual es driven.TokenGeneratorPort, necesitamos una forma de acceder al validador.
+	// Asumimos que TokenGeneratorPort de infrastructure puede validar o llamamos a un cast si se injectó el de JWT
+	// Para respetar la inversión, el JWT service implementa driving.TokenServicePort también.
+	// Haremos fail-safe cast o definimos que se debe pasar.
+	if validador, ok := s.tokenSvc.(driving.TokenServicePort); ok {
+		return validador.ValidateToken(tokenStr)
+	}
+	return nil, fmt.Errorf("el servicio de tokens inyectado no soporta validación")
 }

@@ -46,7 +46,7 @@ func NewJWTService(secretKey, serviceSecret string) *jwtTokenService {
 	}
 }
 
-// ── driven.TokenGeneratorPort ─────────────────────────────────────────────────
+// driven.TokenGeneratorPort
 
 // GenerateToken crea un JWT firmado para un usuario autenticado.
 func (s *jwtTokenService) GenerateToken(user *entities.User) (string, error) {
@@ -90,7 +90,7 @@ func (s *jwtTokenService) GenerateServiceToken(serviceID string) (string, error)
 	return signed, nil
 }
 
-// ── driving.TokenServicePort ──────────────────────────────────────────────────
+// driving.TokenServicePort
 
 // ValidateToken verifica la firma y expiración del JWT.
 // Lo llama el middleware Auth antes de cada request protegida.

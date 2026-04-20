@@ -18,9 +18,9 @@ type AuthRepositoryPort interface {
 	// GetUserByUsername busca un usuario activo por su nombre de usuario.
 	GetUserByUsername(username string) (*entities.User, error)
 
-	// GetUserByUUID busca un usuario por su UUID público.
-	GetUserByUUID(uuid string) (*entities.User, error)
+	// GetUserByEmail busca un usuario por su correo electrónico.
+	GetUserByEmail(email string) (*entities.User, error)
 
-	// GetRoleByID obtiene un rol por su ID.
-	GetRoleByID(roleID int) (*entities.Role, error)
+	// UpdatePassword updates the user's password.
+	UpdatePassword(userUUID string, newPasswordHash string) error
 }

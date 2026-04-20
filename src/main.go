@@ -68,24 +68,24 @@ func buildServer(cfg *config.Config, sqlxDB *sqlx.DB, logger *slog.Logger) *http
 	// driving.TokenServicePort  → lo usa el middleware para VALIDAR tokens
 	jwtSvc := jwtAdapter.NewJWTService(cfg.JWT.SecretKey, cfg.JWT.ServiceSecret)
 
-	// Adaptador secundario: repositorio Postgres 
+	// Adaptadores secundarios: repositorios Postgres 
 	// Recibe *sqlx.DB — no sabe cómo se abrió la conexión
 	authRepo := repository.NewAuthRepository(sqlxDB)
+	userRepo := repository.NewUserRepository(sqlxDB)
 
-	// Núcleo: servicio de dominio
-	// Solo conoce interfaces driven (repo + generador JWT), nunca concreciones.
+	// Núcleo: servicios de dominio
 	// jwtSvc satisface driven.TokenGeneratorPort automáticamente.
 	authSvc := services.NewAuthService(authRepo, jwtSvc)
+	userSvc := services.NewUserService(userRepo)
 
 
 	// Adaptadores primarios: handlers HTTP 
-	// Solo conocen la interfaz driving.AuthServicePort
-	authHandler := handlers.NewAuthHandler(authSvc)
+	authHandler := handlers.NewAuthHandler(authSvc, jwtSvc)
+	userHandler := handlers.NewUserHandler(userSvc, jwtSvc)
  
 
-	// Router con middlewares
-	// jwtSvc satisface driving.TokenServicePort → el middleware lo usa para validar
-	router := httpServer.NewRouter(authHandler, jwtSvc, logger)
+	// Router principal
+	router := httpServer.NewRouter(authHandler, userHandler, jwtSvc, logger)
  
 
 	// Configuración del Servidor HTTP

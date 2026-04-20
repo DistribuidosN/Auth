@@ -9,7 +9,6 @@ import (
 	"Auth/infraestructure/config"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
-	_ "github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -17,7 +16,7 @@ import (
 // Retorna error en lugar de log.Fatalf para que main.go decida qué hacer.
 func ConnectDB(cfg *config.DBConfig, logger *slog.Logger) (*sqlx.DB, error) {
 	dsn := fmt.Sprintf(
-		"%s:%s@tcp(%s:%s)/%s?parseTime=true",
+		"postgres://%s:%s@%s:%s/%s?sslmode=disable",
 		cfg.DBUser,
 		cfg.DBPassword,
 		cfg.DBHost,
@@ -25,7 +24,7 @@ func ConnectDB(cfg *config.DBConfig, logger *slog.Logger) (*sqlx.DB, error) {
 		cfg.DBName,
 	)
  
-	db, err := sqlx.Open("mysql", dsn)
+	db, err := sqlx.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("error abriendo conexión: %w", err)
 	}
@@ -41,11 +40,11 @@ func ConnectDB(cfg *config.DBConfig, logger *slog.Logger) (*sqlx.DB, error) {
 	defer cancel()
 
 	if err := db.PingContext(ctx); err != nil {
-		return nil, fmt.Errorf("no se pudo conectar a mysql en %s:%s: %w",
+		return nil, fmt.Errorf("no se pudo conectar a postgres en %s:%s: %w",
 			cfg.DBHost, cfg.DBPort, err) // ← retorna, no mata
 	}
 
-	logger.Info("conexión a mysql establecida con pool",
+	logger.Info("conexión a postgres establecida con pool",
 		"host", cfg.DBHost,
 		"port", cfg.DBPort,
 		"database", cfg.DBName,

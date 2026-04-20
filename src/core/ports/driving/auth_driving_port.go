@@ -9,9 +9,10 @@ import "Auth/core/domain/entities"
 // AuthServicePort define lo que el handler HTTP puede pedirle al servicio.
 // Lo implementa: core/services/auth_service.go
 type AuthServicePort interface {
-	Register(username, password string, email string,roleID int) (*entities.User, error)
+	Register(username, password string, email string, roleID int) (*entities.User, error)
 	Login(username, password string) (token string, user *entities.User, err error)
-	GetProfile(userUUID string) (*entities.User, error)
-	UpdateProfile(userUUID, newUsername string) (*entities.User, error)
-	DeleteAccount(userUUID string) error
+	Logout(tokenStr string) error
+	ForgetPassword(email string, newPassword string) error
+	ResetPassword(claims *TokenClaims, newPassword string) error
+	Detokenize(tokenStr string) (*TokenClaims, error)
 }
