@@ -26,15 +26,15 @@ func (s *userService) GetProfile(claims *driving.TokenClaims) (*entities.User, e
 	return s.userRepo.GetUserByUUID(claims.UserUUID)
 }
 
-func (s *userService) UpdateProfile(claims *driving.TokenClaims, newUsername string) (*entities.User, error) {
+func (s *userService) UpdateProfile(claims *driving.TokenClaims, username, email string, roleId, status int) (*entities.User, error) {
 	if claims == nil || claims.UserUUID == "" {
 		return nil, fmt.Errorf("claims inválidos")
 	}
-	if newUsername == "" {
-		return nil, fmt.Errorf("el nuevo username no puede estar vacío")
+	if username == "" || email == "" {
+		return nil, fmt.Errorf("username y email son obligatorios")
 	}
 	
-	err := s.userRepo.UpdateUsername(claims.UserUUID, newUsername)
+	err := s.userRepo.UpdateUser(claims.UserUUID, username, email, roleId, status)
 	if err != nil {
 		return nil, fmt.Errorf("error actualizando perfil: %w", err)
 	}

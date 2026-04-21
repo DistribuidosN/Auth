@@ -2,6 +2,7 @@ package repository
 
 import (
 	"fmt"
+
 	"github.com/jmoiron/sqlx"
 
 	"Auth/core/domain/entities"
@@ -30,11 +31,11 @@ func (r *postgresUserRepo) GetUserByUUID(uuid string) (*entities.User, error) {
 	return user, nil
 }
 
-func (r *postgresUserRepo) UpdateUsername(uuid string, newUsername string) error {
-	query := `UPDATE users SET username = $1 WHERE user_uuid = $2`
-	_, err := r.db.Exec(query, newUsername, uuid)
+func (r *postgresUserRepo) UpdateUser(uuid, username, email string, roleId, status int) error {
+	query := `UPDATE users SET username = $1, email = $2, role_id = $3, status = $4 WHERE user_uuid = $5`
+	_, err := r.db.Exec(query, username, email, roleId, status, uuid)
 	if err != nil {
-		return fmt.Errorf("UpdateUsername(%s): %w", uuid, err)
+		return fmt.Errorf("UpdateUser(%s): %w", uuid, err)
 	}
 	return nil
 }

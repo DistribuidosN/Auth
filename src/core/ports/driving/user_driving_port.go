@@ -10,7 +10,7 @@ import "Auth/core/domain/entities"
 // Lo implementa: core/services/user_service.go
 type UserServicePort interface {
 	GetProfile(claims *TokenClaims) (*entities.User, error)
-	UpdateProfile(claims *TokenClaims, newUsername string) (*entities.User, error)
+	UpdateProfile(claims *TokenClaims, username, email string, roleId, status int) (*entities.User, error)
 	DeleteAccount(claims *TokenClaims) error
 	SearchUser(username string) (*entities.User, error)
 	GetRoleByID(roleID int) (*entities.Role, error)

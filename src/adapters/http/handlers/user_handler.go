@@ -60,6 +60,9 @@ func (h *UserHandler) Profile(w http.ResponseWriter, r *http.Request) {
 
 type updateRequest struct {
 	Username string `json:"username"`
+	Email    string `json:"email"`
+	RoleID   int    `json:"role_id"`
+	Status   int    `json:"status"`
 }
 
 // UpdateProfile actualiza el perfil del usuario autenticado.
@@ -75,7 +78,7 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.userSvc.UpdateProfile(claims, req.Username)
+	user, err := h.userSvc.UpdateProfile(claims, req.Username, req.Email, req.RoleID, req.Status)
 	if err != nil {
 		middleware.WriteError(w, http.StatusBadRequest, err.Error())
 		return
@@ -84,6 +87,10 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	middleware.WriteJSON(w, http.StatusOK, map[string]any{
 		"message":  "perfil actualizado",
 		"username": user.Username,
+		"email":    user.Email,
+		"role_id":  user.RoleID,
+		"status":   user.Status,
+		"valid":    true,
 	})
 }
 
