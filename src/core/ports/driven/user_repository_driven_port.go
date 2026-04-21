@@ -7,8 +7,8 @@ type UserRepositoryPort interface {
 	// GetUserByUUID busca un usuario por su UUID público.
 	GetUserByUUID(uuid string) (*entities.User, error)
 
-	// UpdateUsername actualiza el username de un usuario.
-	UpdateUsername(uuid string, newUsername string) error
+	// UpdateUser actualiza múltiples campos de un usuario.
+	UpdateUser(uuid, username, email string, roleId, status int) error
 
 	// UpdateUserStatus desactiva o activa a un usuario (0 inactivo, 1 activo).
 	UpdateUserStatus(uuid string, status int) error
